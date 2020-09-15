@@ -1,6 +1,8 @@
+#! /usr/bin/env python3
+
 import sys, os, re
 
-flags = { 
+flags = {
     'redirected': False,
     'piped': False,
     'cd': False,
@@ -36,14 +38,16 @@ def normal(paths, cmd, args):
         except FileNotFoundError:
             pass
     os.write(2, ('{}: command not found\n'.format(cmd)).encode())
-    sys.exit(1) 
+    sys.exit(1)
 
 def redirect(paths, cmd, args):
+    flags['copyFd'] = os.dup(flags['fd'])
     os.close(flags['fd'])
     os.open(flags['direction'], flags['fileFlags'])
     os.set_inheritable(flags['copyFd'], True)
     for p in paths:
         try:
+            print('{}/{}'.format(p, cmd))
             os.execve('{}/{}'.format(p, cmd), args, os.environ)
         except FileNotFoundError:
             pass
@@ -62,15 +66,13 @@ def validateInput(line):
             flags['redirected'] = True
             if '>' in line:
                 dirIndex = line.index('>')
-                flags['output'] = True         
-                flags['fd'] = 1 
-                flags['copyFd'] = os.dup(flags['fd'])
+                flags['output'] = True
+                flags['fd'] = 1
                 flags['fileFlags'] = os.O_CREAT | os.O_WRONLY
-            else: 
+            else:
                 dirIndex = line.index('<')
-                flags['output'] = False         
-                flags['fd'] = 0 
-                flags['copyFd'] = os.dup(flags['fd'])
+                flags['output'] = False
+                flags['fd'] = 0
                 flags['fileFlags'] = os.O_RDONLY
             flags['direction'] = line[dirIndex+1]
             line = line[0:dirIndex]
@@ -81,11 +83,11 @@ def validateInput(line):
     args = [cmd] + line[1:]
     paths = [path] if path != None else re.split(':', os.environ['PATH'])
     return paths, cmd, args
-    
+
 pid = os.getpid()
 line = re.split(' ', prompt()[0:-1])
 
-while True:    
+while True:
     paths, cmd, args = validateInput(line)
 
     if flags['cd']:
@@ -98,6 +100,7 @@ while True:
             os.write(2, ('fork failed, returning {}\n'.format(rc).encode()))
             sys.exit(1)
         elif rc == 0:
+            print(flags)
             if flags['redirected']:
                 redirect(paths, cmd, args)
             else:
@@ -106,7 +109,7 @@ while True:
             childPidCode = os.wait()
             if flags['redirected']:
                 os.dup2(flags['copyFd'], flags['fd'])
-                os.close(flags['copyFd']) 
+                os.close(flags['copyFd'])
                 flags['redirected'] = False
             if childPidCode[1] != 0:
                 os.write(1, ('Program terminated with exit code {}\n'.format(childPidCode[1])).encode())
