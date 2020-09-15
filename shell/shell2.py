@@ -60,7 +60,7 @@ def setFlags(line):
             line = line[:dirIndex]
             os.close(fileDescriptors['stdprev'])
             os.open(flags['redirection'], (os.O_CREAT | os.O_WRONLY) if flags['output'] else os.O_RDONLY)
-            os.set_inheritable(fileDescriptors['stdcopy'], True)
+            os.set_inheritable(fileDescriptors['stdprev'], True)
     return line
 
 def getCommand(line):
