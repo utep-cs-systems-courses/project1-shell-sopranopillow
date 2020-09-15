@@ -6,7 +6,6 @@ flags = {
     'redirected': False,
     'redirection': '',
     'output': False,
-    'fileFlags': None,
     'cd': False,
 }
 
@@ -50,19 +49,17 @@ def setFlags(line):
             if '>' in line:
                 dirIndex = line.index('>')
                 flags['output'] = True
-                flags['fileFlags'] = os.O_CREAT | os.O_WRONLY
-                fileDescriptors['stdprev'] = fileDescriptors['stdout']
-                fileDescriptors['stdcopy'] = os.dup(fileDescriptors['stdprev'])
+                fileDescriptors['stdprev'] = 1
+                fileDescriptors['stdcopy'] = os.dup(1)
             else:
                 dirIndex = line.index('<')
                 flags['output'] = False
-                flags['fileFlags'] = os.O_RDONLY
-                fileDescriptors['stdprev'] = fileDescriptors['stdin']
-                fileDescriptors['stdcopy'] = os.dup(fileDescriptors['stdprev'])
+                fileDescriptors['stdprev'] = 0
+                fileDescriptors['stdcopy'] = os.dup(0)
             flags['redirection'] = line[dirIndex+1]
             line = line[:dirIndex]
             os.close(fileDescriptors['stdprev'])
-            os.open(flags['redirection'], flags['fileFlags'])
+            os.open(flags['redirection'], (os.O_CREAT | os.O_WRONLY) if flags['output'] else os.O_RDONLY)
             os.set_inheritable(fileDescriptors['stdcopy'], True)
     return line
 
