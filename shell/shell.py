@@ -1,116 +1,122 @@
 #! /usr/bin/env python3
-
 import sys, os, re
 
-flags = {
+flags = { # Flags to setup filedescriptors before command
     'redirected': False,
-    'piped': False,
-    'cd': False,
-    'direction': '',
+    'redirection': '',
     'output': False,
-    'fd': None,
-    'copyFd': None,
-    'fileFlags': None
+    'cd': False,
+    'piped': False,
+    'pr': None,
+    'pw': None,
+    'background': False
+}
+
+fileDescriptors = {
+    'stdin': 0,
+    'stdout': 1,
+    'stderr': 2,
+    'stdcopy': None,
+    'stdprev': None
 }
 
 def prompt():
     ps1 = '$ '
-    try: # This is needed if you want to use the shell inside emacs
-        ps1 = ps1 if os.environ['PS1'] == '' else '{}'.format(os.environ["PS1"])
+    try: # needed to run inside emacs
+        ps1 = ps1 if os.environ['PS1'] == '' else os.environ['PS1']
     except Exception:
         pass
 
-    os.write(1, ('{}'.format(ps1).encode()))
-    sys.stdout.flush()
-    cmd = os.read(0, 1000)
-    return cmd.decode('utf-8')
+    os.write(fileDescriptors['stdout'], (ps1).encode()) # writing prompt
+    cmd = os.read(fileDescriptors['stdin'], 1000).decode() # getting input
+    return cmd if cmd[-1] != '\n' else cmd[:-1]
 
-def getCmd(str):
-    pth = re.search('/.*/', str)
-    pth = None if pth == None else pth.group()
-    cmd = str if pth == None else str.replace(pth, '')
-    return pth, cmd
-
-def normal(paths, cmd, args):
+def execCmd(paths, cmd, args): # executes command, assumes setup has been done
     for p in paths:
         try:
             os.execve('{}/{}'.format(p, cmd), args, os.environ)
         except FileNotFoundError:
             pass
-    os.write(2, ('{}: command not found\n'.format(cmd)).encode())
+    os.write(fileDescriptors['stderr'], ('{}: command not found\n'.format(cmd)).encode())
     sys.exit(1)
 
-def redirect(paths, cmd, args):
-    flags['copyFd'] = os.dup(flags['fd'])
-    os.close(flags['fd'])
-    os.open(flags['direction'], flags['fileFlags'])
-    os.set_inheritable(flags['copyFd'], True)
-    for p in paths:
-        try:
-            print('{}/{}'.format(p, cmd))
-            os.execve('{}/{}'.format(p, cmd), args, os.environ)
-        except FileNotFoundError:
-            pass
-    os.write(2, ('{}: command not found\n'.format(cmd)).encode())
-    sys.exit(1)
-
-def validateInput(line):
+def setFlags(line): # sets flags and sets up to execute command
     if len(line) == 1:
         if line[0] == 'exit':
             sys.exit(0)
-    if line[0] == 'cd':
-            flags['cd'] = True
-            return [line[1]], None, None
+    if line [0] == 'cd':
+        flags['cd'] = True
+    if '&' in line:
+        flags['background'] = True
+        line.remove('&')
     if len(line) >= 3:
-        if '>' in line or '<' in line:
+        if '|' in line:
+            flags['piped'] = True
+            flags['pr'], flags['pw'] = os.pipe()
+            for f in (flags['pr'], flags['pw']):
+                os.set_inheritable(f, True)
+            os.close(1)
+            os.dup(flags['pw'])
+
+        elif '>' in line or '<' in line:
             flags['redirected'] = True
             if '>' in line:
                 dirIndex = line.index('>')
                 flags['output'] = True
-                flags['fd'] = 1
-                flags['fileFlags'] = os.O_CREAT | os.O_WRONLY
+                fileDescriptors['stdprev'] = 1
+                fileDescriptors['stdcopy'] = os.dup(1)
             else:
                 dirIndex = line.index('<')
                 flags['output'] = False
-                flags['fd'] = 0
-                flags['fileFlags'] = os.O_RDONLY
-            flags['direction'] = line[dirIndex+1]
-            line = line[0:dirIndex]
-        elif line[1] == '|':
-            flags['piped'] = True
+                fileDescriptors['stdprev'] = 0
+                fileDescriptors['stdcopy'] = os.dup(0)
+            flags['redirection'] = line[dirIndex+1]
+            line = line[:dirIndex]
+            os.close(fileDescriptors['stdprev'])
+            os.open(flags['redirection'], (os.O_CREAT | os.O_WRONLY) if flags['output'] else os.O_RDONLY)
+            os.set_inheritable(fileDescriptors['stdprev'], True)
+    return line
 
-    path, cmd = getCmd(line[0])
+def getCommand(line): # splits command and sets up paths, command, and arguments
+    cmdPath = re.search('/.*/', line[0])
+    cmdPath = None if cmdPath == None else cmdPath.group()
+    cmd = line[0] if cmdPath == None else line[0].replace(cmdPath, '')
     args = [cmd] + line[1:]
-    paths = [path] if path != None else re.split(':', os.environ['PATH'])
+    paths = [cmdPath] if cmdPath != None else re.split(':', os.environ['PATH'])
     return paths, cmd, args
 
+
+### main
 pid = os.getpid()
-line = re.split(' ', prompt()[0:-1])
+line = re.split(' ', prompt())
 
 while True:
-    paths, cmd, args = validateInput(line)
+    line = setFlags(line)
+    paths, cmd, args = getCommand(line)
 
-    if flags['cd']:
-        os.chdir(paths[0])
+    if cmd == 'cd':
+        os.chdir(args[1])
         flags['cd'] = False
     else:
         rc = os.fork()
 
         if rc < 0:
-            os.write(2, ('fork failed, returning {}\n'.format(rc).encode()))
+            os.write(fileDescriptors['stderr'], ('fork failed, returning {}\n'.format(rc).encode()))
             sys.exit(1)
         elif rc == 0:
-            print(flags)
-            if flags['redirected']:
-                redirect(paths, cmd, args)
-            else:
-                normal(paths, cmd, args)
+            execCmd(paths, cmd, args)
         else:
-            childPidCode = os.wait()
+            if not flags['background']:
+                childPidCode = os.wait()
+                flags['background'] = True
             if flags['redirected']:
-                os.dup2(flags['copyFd'], flags['fd'])
-                os.close(flags['copyFd'])
+                os.dup2(fileDescriptors['stdcopy'], fileDescriptors['stdprev']) # restoring and closing file descriptors
+                os.close(fileDescriptors['stdcopy'])
                 flags['redirected'] = False
-            if childPidCode[1] != 0:
-                os.write(1, ('Program terminated with exit code {}\n'.format(childPidCode[1])).encode())
-    line = re.split(' ', prompt()[0:-1])
+            if flags['piped']:
+                for fd in (flags['pr'], flags['pw']):
+                    os.close(fd)
+                flags['piped'] = False
+            if not flags['background'] and childPidCode[1] != 0:
+                os.write(fileDescriptors['stdout'], ('Program terminated with exit code {}\n'.format(childPidCode[1])).encode())
+    line = re.split(' ', prompt())
