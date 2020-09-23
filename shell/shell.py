@@ -9,8 +9,10 @@ flags = { # Flags to setup filedescriptors before command
     'piped': False,
     'pr': None,
     'pw': None,
-    'background': False
+    'background': False,
 }
+
+cmdQ = []
 
 fileDescriptors = {
     'stdin': 0,
@@ -22,14 +24,13 @@ fileDescriptors = {
 
 def prompt():
     ps1 = '$ '
-    try: # needed to run inside emacs
+    try:
         ps1 = ps1 if os.environ['PS1'] == '' else os.environ['PS1']
     except Exception:
         pass
-
     os.write(fileDescriptors['stdout'], (ps1).encode()) # writing prompt
     cmd = os.read(fileDescriptors['stdin'], 1000).decode() # getting input
-    return cmd if cmd[-1] != '\n' else cmd[:-1]
+    return cmd[:-1] if cmd[-1] == '\n' else cmd
 
 def execCmd(paths, cmd, args): # executes command, assumes setup has been done
     for p in paths:
@@ -84,13 +85,32 @@ def getCommand(line): # splits command and sets up paths, command, and arguments
     args = [cmd] + line[1:]
     paths = [cmdPath] if cmdPath != None else re.split(':', os.environ['PATH'])
     return paths, cmd, args
-
+    
+def checkLine(line):
+    cmds = []
+    l = line.split('\\n')
+    if len(l) == 1:
+        return l
+    for i in l:
+        if i != '':
+            cmds.append(i)
+    return cmds[-1::-1]
 
 ### main
 pid = os.getpid()
-line = re.split(' ', prompt())
+line = prompt()
 
 while True:
+    if len(cmdQ) > 0:
+        line = cmdQ.pop()
+    else:
+        cmds = checkLine(line)
+        if len(cmds) == 1:
+            line = cmds[0]
+        else:
+            cmdQ+=cmds
+            line = cmdQ.pop()
+    line = re.split(' ', line)
     line = setFlags(line)
     paths, cmd, args = getCommand(line)
 
@@ -119,4 +139,5 @@ while True:
                 flags['piped'] = False
             if not flags['background'] and childPidCode[1] != 0:
                 os.write(fileDescriptors['stdout'], ('Program terminated with exit code {}\n'.format(childPidCode[1])).encode())
-    line = re.split(' ', prompt())
+    if len(cmdQ) == 0:
+        line = prompt()
