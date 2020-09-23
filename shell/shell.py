@@ -24,7 +24,7 @@ fileDescriptors = {
 
 def prompt():
     ps1 = '$ '
-    try:
+    try: # needed to work in console inside emacs
         ps1 = ps1 if os.environ['PS1'] == '' else os.environ['PS1']
     except Exception:
         pass
@@ -94,22 +94,24 @@ def checkLine(line):
     for i in l:
         if i != '':
             cmds.append(i)
-    return cmds[-1::-1]
+    return cmds[-1::-1] # reversing list so it executes from first to last
 
 ### main
 pid = os.getpid()
-line = prompt()
 
 while True:
-    if len(cmdQ) > 0:
-        line = cmdQ.pop()
-    else:
-        cmds = checkLine(line)
-        if len(cmds) == 1:
-            line = cmds[0]
+    if len(cmdQ) == 0:
+        line = prompt()
+        line = checkLine(line)
+        if len(line) == 1:
+            line = line[0]
         else:
-            cmdQ+=cmds
+            cmdQ = line
             line = cmdQ.pop()
+    else:
+        line = cmdQ.pop()
+    line = line if line[0] != ' ' else line[1:] #removing white space in case they were adeded
+    line = line if line[-1] != ' ' else line[:-1]
     line = re.split(' ', line)
     line = setFlags(line)
     paths, cmd, args = getCommand(line)
@@ -139,5 +141,3 @@ while True:
                 flags['piped'] = False
             if not flags['background'] and childPidCode[1] != 0:
                 os.write(fileDescriptors['stdout'], ('Program terminated with exit code {}\n'.format(childPidCode[1])).encode())
-    if len(cmdQ) == 0:
-        line = prompt()
